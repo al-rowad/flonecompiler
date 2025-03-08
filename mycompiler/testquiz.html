@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Python Syntax Quiz</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+
+        .quiz-container {
+            background: #fff;
+            padding: 5px;
+            border-radius: 0px;
+                        text-align: center;
+            width: 400px;
+        }
+
+        h1 {
+    color: #333;
+font-size: 17px;
+}
+
+
+        #question {
+            margin-bottom: 10px;
+            font-size: 13px;
+            color: #333;
+        }
+
+        .options {
+            margin-bottom: 10px;
+        }
+
+        .option {
+            display: block;
+            background: #007bff;
+            color: #fff;
+            border: none;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            cursor: pointer;
+            width: 100%;
+        }
+
+        .option:hover {
+            background: #0056b3;
+        }
+
+        #next-btn {
+            background-color: #28a745;
+            color: white;
+            padding: 10px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        #next-btn:disabled {
+            background-color: #ccc;
+        }
+
+        #feedback-modal {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: #fff;
+            padding: 5px;
+            border-radius: 10px;
+           box-shadow:  5px 5px 10px #5c5a5a,
+             -5px -5px 10px #ffffff;
+        }
+
+        #feedback-modal h2 {
+            font-size: 12px;
+            margin-bottom: 20px;
+
+        }
+
+        #close-feedback {
+            background-color: #007bff;
+            color: white;
+            padding: 10px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        #score-container {
+            margin-top: 20px;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+    </style>
+</head>
+<body>
+    <div class="quiz-container">
+                <div id="question-container">
+            <h2 id="question">Question text</h2>
+            <div class="options">
+                <button class="option" onclick="selectAnswer(0)">Option 1</button>
+                <button class="option" onclick="selectAnswer(1)">Option 2</button>
+                <button class="option" onclick="selectAnswer(2)">Option 3</button>
+                <button class="option" onclick="selectAnswer(3)">Option 4</button>
+            </div>
+        </div>
+        <button id="next-btn" onclick="nextQuestion()">NEXT</button>
+        <div id="score-container" class="hidden">
+            <h2>Your Score: <span id="score"></span>/30</h2>
+            <button onclick="restartQuiz()">Restart Quiz</button>
+        </div>
+    </div>
+
+    <!-- Feedback Modal -->
+    <div id="feedback-modal">
+        <h2 id="feedback-message"></h2>
+        <button id="close-feedback" onclick="closeFeedback()">OK</button>
+    </div>
+
+        <script>
+        const questions = [
+            {
+                question: "1. Which of the following is the correct way to assign a variable?",
+                options: ["var 5 = x", "x = 5", "x := 5", "5 -> x"],
+                correct: 1
+            },
+            {
+                question: "2. What is the output of the following code?\n<pre><code>x = 10\nx += 5\nprint(x)</code></pre>",
+                options: ["10", "5", "15", "None of the above"],
+                correct: 2
+            },
+            {
+                question: "3. How do you declare a variable with a string value?",
+                options: ["x == 'hello'", "x = hello", "x = 'hello'", "x := 'hello'"],
+                correct: 2
+            },
+            {
+                question: "4. Which of the following is a correct way to assign a float variable?",
+                options: ["x = 3.14", "x = 3,14", "x == 3.14", "float x = 3.14"],
+                correct: 0
+            },
+            {
+                question: "5. What will be the output of the following code?\n<pre><code>x = 5\nprint(type(x))</code></pre>",
+                options: ["int", "<class 'int'>", "<class int>", "integer"],
+                correct: 1
+            },
+            {
+                question: "6. Which function reads input from the user in Python?",
+                options: ["input()", "print()", "read()", "scanf()"],
+                correct: 0
+            },
+            {
+                question: "7. Which of the following is a valid variable name?",
+                options: ["2nd_variable", "variable-2", "_var2", "variable@2"],
+                correct: 2
+            },
+            {
+                question: "8. What is the correct way to declare a variable with a float value?",
+                options: ["x == 3.5", "x = 3,5", "x = 3.5", "float x = 3.5"],
+                correct: 2
+            },
+            {
+                question: "9. What will be the output of the following code?\n<pre><code>print(2 * 3 ** 2)</code></pre>",
+                options: ["18", "36", "12", "None of the above"],
+                correct: 0
+            },
+            {
+                question: "10. What is the correct way to write comments in Python?",
+                options: ["# comment", "// comment", "/* comment */", "% comment"],
+                correct: 0
+            },
+            {
+                question: "11. What does this code output?\n<pre><code>print('Hello' + ' ' + 'World')</code></pre>",
+                options: ["Hello World", "HelloWorld", "'Hello World'", "None of the above"],
+                correct: 0
+            },
+            {
+                question: "12. What is the correct way to declare a boolean variable?",
+                options: ["bool x = true", "x = True", "x = 'True'", "x = 1"],
+                correct: 1
+            },
+            {
+                question: "13. What is the output of the following code?\n<pre><code>print('Hello' * 3)</code></pre>",
+                options: ["HelloHelloHello", "'HelloHelloHello'", "Error", "None of the above"],
+                correct: 0
+            },
+            {
+                question: "14. How do you declare a constant in Python?",
+                options: ["const x = 5", "final x = 5", "x = 5", "Python does not have constants"],
+                correct: 3
+            },
+            {
+                question: "15. What is the output of the following code?\n<pre><code>print(type(5.5))</code></pre>",
+                options: ["int", "float", "double", "None of the above"],
+                correct: 1
+            },
+            {
+                question: "16. Which of the following is a valid assignment?",
+                options: ["x == 5", "x != 5", "x = 5", "x + 5"],
+                correct: 2
+            },
+            {
+                question: "17. What is the correct syntax for a multi-line comment in Python?",
+                options: ["''' comment '''", "\"\"\" comment \"\"\"", "/* comment */", "// comment"],
+                correct: 1
+            },
+            {
+                question: "18. What is the result of the following?\n<pre><code>print(2 // 3)</code></pre>",
+                options: ["0", "0.6666", "None", "2"],
+                correct: 0
+            },
+            {
+                question: "19. How do you get user input as an integer in Python?",
+                options: ["input(int)", "int(input())", "input()", "eval(input())"],
+                correct: 1
+            },
+            {
+                question: "20. What does the following code output?\n<pre><code>print(5 % 2)</code></pre>",
+                options: ["1", "2", "0", "None of the above"],
+                correct: 0
+            }
+            // Add remaining questions
+        ];
+
+        let currentQuestionIndex = 0;
+        let score = 0;
+
+        function showQuestion() {
+            const questionElement = document.getElementById('question');
+            const optionsElements = document.getElementsByClassName('option');
+
+            questionElement.innerHTML = questions[currentQuestionIndex].question;
+            for (let i = 0; i < 4; i++) {
+                optionsElements[i].textContent = questions[currentQuestionIndex].options[i];
+            }
+
+            document.getElementById('feedback-modal').style.display = 'none';
+        }
+
+        function selectAnswer(index) {
+            const correctAnswer = questions[currentQuestionIndex].correct;
+            const feedbackMessage = document.getElementById('feedback-message');
+
+            if (index === correctAnswer) {
+                feedbackMessage.textContent = 'Correct!';
+                feedbackMessage.style.color = 'green';
+                score++;
+            } else {
+                feedbackMessage.textContent = `Wrong! The correct answer is: ${questions[currentQuestionIndex].options[correctAnswer]}`;
+                feedbackMessage.style.color = 'red';
+            }
+
+            document.getElementById('feedback-modal').style.display = 'block';
+            document.getElementById('next-btn').disabled = false;
+        }
+
+        function nextQuestion() {
+            currentQuestionIndex++;
+
+            if (currentQuestionIndex < questions.length) {
+                showQuestion();
+                document.getElementById('next-btn').disabled = true;
+            } else {
+                endQuiz();
+            }
+        }
+
+        function endQuiz() {
+            document.getElementById('question-container').classList.add('hidden');
+            document.getElementById('next-btn').classList.add('hidden');
+            document.getElementById('score-container').classList.remove('hidden');
+
+            const scoreElement = document.getElementById('score');
+            scoreElement.textContent = score;
+        }
+
+        function restartQuiz() {
+            score = 0;
+            currentQuestionIndex = 0;
+            document.getElementById('question-container').classList.remove('hidden');
+            document.getElementById('next-btn').classList.remove('hidden');
+            document.getElementById('score-container').classList.add('hidden');
+            showQuestion();
+            document.getElementById('next-btn').disabled = true;
+        }
+
+        function closeFeedback() {
+            document.getElementById('feedback-modal').style.display = 'none';
+        }
+
+        window.onload = function() {
+            showQuestion();
+            document.getElementById('next-btn').disabled = true;
+        };
+    </script>
+</body>
+</html>

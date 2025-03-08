@@ -1,0 +1,638 @@
+
+(function(mod) {
+  if (typeof exports == "object" && typeof module == "object") // CommonJS
+    mod(require("./codemirror/lib/codemirror"));
+  else if (typeof define == "function" && define.amd) // AMD
+    define(["./codemirror/lib/codemirror"], mod);
+  else // Plain browser env
+    mod(CodeMirror);
+})(function(CodeMirror) {
+  "use strict";
+
+  function doFold(cm, pos, options, force) {
+    if (options && options.call) {
+      var finder = options;
+      options = null;
+    } else {
+      var finder = getOption(cm, options, "rangeFinder");
+    }
+    if (typeof pos == "number") pos = CodeMirror.Pos(pos, 0);
+    var minSize = getOption(cm, options, "minFoldSize");
+
+    function getRange(allowFolded) {
+      var range = finder(cm, pos);
+      if (!range || range.to.line - range.from.line < minSize) return null;
+      if (force === "fold") return range;
+
+      var marks = cm.findMarksAt(range.from);
+      for (var i = 0; i < marks.length; ++i) {
+        if (marks[i].__isFold) {
+          if (!allowFolded) return null;
+          range.cleared = true;
+          marks[i].clear();
+        }
+      }
+      return range;
+    }
+
+    var range = getRange(true);
+    if (getOption(cm, options, "scanUp")) while (!range && pos.line > cm.firstLine()) {
+      pos = CodeMirror.Pos(pos.line - 1, 0);
+      range = getRange(false);
+    }
+    if (!range || range.cleared || force === "unfold") return;
+
+    var myWidget = makeWidget(cm, options, range);
+    CodeMirror.on(myWidget, "mousedown", function(e) {
+      myRange.clear();
+      CodeMirror.e_preventDefault(e);
+    });
+    var myRange = cm.markText(range.from, range.to, {
+      replacedWith: myWidget,
+      clearOnEnter: getOption(cm, options, "clearOnEnter"),
+      __isFold: true
+    });
+    myRange.on("clear", function(from, to) {
+      CodeMirror.signal(cm, "unfold", cm, from, to);
+    });
+    CodeMirror.signal(cm, "fold", cm, range.from, range.to);
+  }
+
+  function makeWidget(cm, options, range) {
+    var widget = getOption(cm, options, "widget");
+
+    if (typeof widget == "function") {
+      widget = widget(range.from, range.to);
+    }
+
+    if (typeof widget == "string") {
+      var text = document.createTextNode(widget);
+      widget = document.createElement("span");
+      widget.appendChild(text);
+      widget.className = "CodeMirror-foldmarker";
+    } else if (widget) {
+      widget = widget.cloneNode(true)
+    }
+    return widget;
+  }
+
+  // Clumsy backwards-compatible interface
+  CodeMirror.newFoldFunction = function(rangeFinder, widget) {
+    return function(cm, pos) { doFold(cm, pos, {rangeFinder: rangeFinder, widget: widget}); };
+  };
+
+  // New-style interface
+  CodeMirror.defineExtension("foldCode", function(pos, options, force) {
+    doFold(this, pos, options, force);
+  });
+
+  CodeMirror.defineExtension("isFolded", function(pos) {
+    var marks = this.findMarksAt(pos);
+    for (var i = 0; i < marks.length; ++i)
+      if (marks[i].__isFold) return true;
+  });
+
+  CodeMirror.commands.toggleFold = function(cm) {
+    cm.foldCode(cm.getCursor());
+  };
+  CodeMirror.commands.fold = function(cm) {
+    cm.foldCode(cm.getCursor(), null, "fold");
+  };
+  CodeMirror.commands.unfold = function(cm) {
+    cm.foldCode(cm.getCursor(), { scanUp: false }, "unfold");
+  };
+  CodeMirror.commands.foldAll = function(cm) {
+    cm.operation(function() {
+      for (var i = cm.firstLine(), e = cm.lastLine(); i <= e; i++)
+        cm.foldCode(CodeMirror.Pos(i, 0), { scanUp: false }, "fold");
+    });
+  };
+  CodeMirror.commands.unfoldAll = function(cm) {
+    cm.operation(function() {
+      for (var i = cm.firstLine(), e = cm.lastLine(); i <= e; i++)
+        cm.foldCode(CodeMirror.Pos(i, 0), { scanUp: false }, "unfold");
+    });
+  };
+
+  CodeMirror.registerHelper("fold", "combine", function() {
+    var funcs = Array.prototype.slice.call(arguments, 0);
+    return function(cm, start) {
+      for (var i = 0; i < funcs.length; ++i) {
+        var found = funcs[i](cm, start);
+        if (found) return found;
+      }
+    };
+  });
+
+  CodeMirror.registerHelper("fold", "auto", function(cm, start) {
+    var helpers = cm.getHelpers(start, "fold");
+    for (var i = 0; i < helpers.length; i++) {
+      var cur = helpers[i](cm, start);
+      if (cur) return cur;
+    }
+  });
+
+  var defaultOptions = {
+    rangeFinder: CodeMirror.fold.auto,
+    widget: "\u2194",
+    minFoldSize: 0,
+    scanUp: false,
+    clearOnEnter: true
+  };
+
+  CodeMirror.defineOption("foldOptions", null);
+
+  function getOption(cm, options, name) {
+    if (options && options[name] !== undefined)
+      return options[name];
+    var editorOptions = cm.options.foldOptions;
+    if (editorOptions && editorOptions[name] !== undefined)
+      return editorOptions[name];
+    return defaultOptions[name];
+  }
+
+  CodeMirror.defineExtension("foldOption", function(options, name) {
+    return getOption(this, options, name);
+  });
+  
+    CodeMirror.defineOption("foldGutter", false, function(cm, val, old) {
+    if (old && old != CodeMirror.Init) {
+      cm.clearGutter(cm.state.foldGutter.options.gutter);
+      cm.state.foldGutter = null;
+      cm.off("gutterClick", onGutterClick);
+      cm.off("changes", onChange);
+      cm.off("viewportChange", onViewportChange);
+      cm.off("fold", onFold);
+      cm.off("unfold", onFold);
+      cm.off("swapDoc", onChange);
+      cm.off("optionChange", optionChange);
+    }
+    if (val) {
+      cm.state.foldGutter = new State(parseOptions(val));
+      updateInViewport(cm);
+      cm.on("gutterClick", onGutterClick);
+      cm.on("changes", onChange);
+      cm.on("viewportChange", onViewportChange);
+      cm.on("fold", onFold);
+      cm.on("unfold", onFold);
+      cm.on("swapDoc", onChange);
+      cm.on("optionChange", optionChange);
+    }
+  });
+
+  var Pos = CodeMirror.Pos;
+
+  function State(options) {
+    this.options = options;
+    this.from = this.to = 0;
+  }
+
+  function parseOptions(opts) {
+    if (opts === true) opts = {};
+    if (opts.gutter == null) opts.gutter = "CodeMirror-foldgutter";
+    if (opts.indicatorOpen == null) opts.indicatorOpen = "CodeMirror-foldgutter-open";
+    if (opts.indicatorFolded == null) opts.indicatorFolded = "CodeMirror-foldgutter-folded";
+    return opts;
+  }
+
+  function isFolded(cm, line) {
+    var marks = cm.findMarks(Pos(line, 0), Pos(line + 1, 0));
+    for (var i = 0; i < marks.length; ++i) {
+      if (marks[i].__isFold) {
+        var fromPos = marks[i].find(-1);
+        if (fromPos && fromPos.line === line)
+          return marks[i];
+      }
+    }
+  }
+
+  function marker(spec) {
+    if (typeof spec == "string") {
+      var elt = document.createElement("div");
+      elt.className = spec + " CodeMirror-guttermarker-subtle";
+      return elt;
+    } else {
+      return spec.cloneNode(true);
+    }
+  }
+
+  function updateFoldInfo(cm, from, to) {
+    var opts = cm.state.foldGutter.options, cur = from - 1;
+    var minSize = cm.foldOption(opts, "minFoldSize");
+    var func = cm.foldOption(opts, "rangeFinder");
+    // we can reuse the built-in indicator element if its className matches the new state
+    var clsFolded = typeof opts.indicatorFolded == "string" && classTest(opts.indicatorFolded);
+    var clsOpen = typeof opts.indicatorOpen == "string" && classTest(opts.indicatorOpen);
+    cm.eachLine(from, to, function(line) {
+      ++cur;
+      var mark = null;
+      var old = line.gutterMarkers;
+      if (old) old = old[opts.gutter];
+      if (isFolded(cm, cur)) {
+        if (clsFolded && old && clsFolded.test(old.className)) return;
+        mark = marker(opts.indicatorFolded);
+      } else {
+        var pos = Pos(cur, 0);
+        var range = func && func(cm, pos);
+        if (range && range.to.line - range.from.line >= minSize) {
+          if (clsOpen && old && clsOpen.test(old.className)) return;
+          mark = marker(opts.indicatorOpen);
+        }
+      }
+      if (!mark && !old) return;
+      cm.setGutterMarker(line, opts.gutter, mark);
+    });
+  }
+
+  // copied from CodeMirror/src/util/dom.js
+  function classTest(cls) { return new RegExp("(^|\\s)" + cls + "(?:$|\\s)\\s*") }
+
+  function updateInViewport(cm) {
+    var vp = cm.getViewport(), state = cm.state.foldGutter;
+    if (!state) return;
+    cm.operation(function() {
+      updateFoldInfo(cm, vp.from, vp.to);
+    });
+    state.from = vp.from; state.to = vp.to;
+  }
+
+  function onGutterClick(cm, line, gutter) {
+    var state = cm.state.foldGutter;
+    if (!state) return;
+    var opts = state.options;
+    if (gutter != opts.gutter) return;
+    var folded = isFolded(cm, line);
+    if (folded) folded.clear();
+    else cm.foldCode(Pos(line, 0), opts);
+  }
+
+  function optionChange(cm, option) {
+    if (option == "mode") onChange(cm)
+  }
+
+  function onChange(cm) {
+    var state = cm.state.foldGutter;
+    if (!state) return;
+    var opts = state.options;
+    state.from = state.to = 0;
+    clearTimeout(state.changeUpdate);
+    state.changeUpdate = setTimeout(function() { updateInViewport(cm); }, opts.foldOnChangeTimeSpan || 600);
+  }
+
+  function onViewportChange(cm) {
+    var state = cm.state.foldGutter;
+    if (!state) return;
+    var opts = state.options;
+    clearTimeout(state.changeUpdate);
+    state.changeUpdate = setTimeout(function() {
+      var vp = cm.getViewport();
+      if (state.from == state.to || vp.from - state.to > 20 || state.from - vp.to > 20) {
+        updateInViewport(cm);
+      } else {
+        cm.operation(function() {
+          if (vp.from < state.from) {
+            updateFoldInfo(cm, vp.from, state.from);
+            state.from = vp.from;
+          }
+          if (vp.to > state.to) {
+            updateFoldInfo(cm, state.to, vp.to);
+            state.to = vp.to;
+          }
+        });
+      }
+    }, opts.updateViewportTimeSpan || 400);
+  }
+
+  function onFold(cm, from) {
+    var state = cm.state.foldGutter;
+    if (!state) return;
+    var line = from.line;
+    if (line >= state.from && line < state.to)
+      updateFoldInfo(cm, line, line + 1);
+  }
+  
+  function lineIndent(cm, lineNo) {
+  var text = cm.getLine(lineNo)
+  var spaceTo = text.search(/\S/)
+  if (spaceTo == -1 || /\bcomment\b/.test(cm.getTokenTypeAt(CodeMirror.Pos(lineNo, spaceTo + 1))))
+    return -1
+  return CodeMirror.countColumn(text, null, cm.getOption("tabSize"))
+}
+
+CodeMirror.registerHelper("fold", "indent", function(cm, start) {
+  var myIndent = lineIndent(cm, start.line)
+  if (myIndent < 0) return
+  var lastLineInFold = null
+
+  // Go through lines until we find a line that definitely doesn't belong in
+  // the block we're folding, or to the end.
+  for (var i = start.line + 1, end = cm.lastLine(); i <= end; ++i) {
+    var indent = lineIndent(cm, i)
+    if (indent == -1) {
+    } else if (indent > myIndent) {
+      // Lines with a greater indent are considered part of the block.
+      lastLineInFold = i;
+    } else {
+      // If this line has non-space, non-comment content, and is
+      // indented less or equal to the start line, it is the start of
+      // another block.
+      break;
+    }
+  }
+  if (lastLineInFold) return {
+    from: CodeMirror.Pos(start.line, cm.getLine(start.line).length),
+    to: CodeMirror.Pos(lastLineInFold, cm.getLine(lastLineInFold).length)
+  };
+});
+
+ CodeMirror.registerHelper("fold", "markdown", function(cm, start) {
+  var maxDepth = 100;
+
+  function isHeader(lineNo) {
+    var tokentype = cm.getTokenTypeAt(CodeMirror.Pos(lineNo, 0));
+    return tokentype && /\bheader\b/.test(tokentype);
+  }
+
+  function headerLevel(lineNo, line, nextLine) {
+    var match = line && line.match(/^#+/);
+    if (match && isHeader(lineNo)) return match[0].length;
+    match = nextLine && nextLine.match(/^[=\-]+\s*$/);
+    if (match && isHeader(lineNo + 1)) return nextLine[0] == "=" ? 1 : 2;
+    return maxDepth;
+  }
+
+  var firstLine = cm.getLine(start.line), nextLine = cm.getLine(start.line + 1);
+  var level = headerLevel(start.line, firstLine, nextLine);
+  if (level === maxDepth) return undefined;
+
+  var lastLineNo = cm.lastLine();
+  var end = start.line, nextNextLine = cm.getLine(end + 2);
+  while (end < lastLineNo) {
+    if (headerLevel(end + 1, nextLine, nextNextLine) <= level) break;
+    ++end;
+    nextLine = nextNextLine;
+    nextNextLine = cm.getLine(end + 2);
+  }
+
+  return {
+    from: CodeMirror.Pos(start.line, firstLine.length),
+    to: CodeMirror.Pos(end, cm.getLine(end).length)
+  };
+});
+  
+  CodeMirror.registerGlobalHelper("fold", "comment", function(mode) {
+  return mode.blockCommentStart && mode.blockCommentEnd;
+}, function(cm, start) {
+  var mode = cm.getModeAt(start), startToken = mode.blockCommentStart, endToken = mode.blockCommentEnd;
+  if (!startToken || !endToken) return;
+  var line = start.line, lineText = cm.getLine(line);
+
+  var startCh;
+  for (var at = start.ch, pass = 0;;) {
+    var found = at <= 0 ? -1 : lineText.lastIndexOf(startToken, at - 1);
+    if (found == -1) {
+      if (pass == 1) return;
+      pass = 1;
+      at = lineText.length;
+      continue;
+    }
+    if (pass == 1 && found < start.ch) return;
+    if (/comment/.test(cm.getTokenTypeAt(CodeMirror.Pos(line, found + 1))) &&
+        (found == 0 || lineText.slice(found - endToken.length, found) == endToken ||
+         !/comment/.test(cm.getTokenTypeAt(CodeMirror.Pos(line, found))))) {
+      startCh = found + startToken.length;
+      break;
+    }
+    at = found - 1;
+  }
+
+  var depth = 1, lastLine = cm.lastLine(), end, endCh;
+  outer: for (var i = line; i <= lastLine; ++i) {
+    var text = cm.getLine(i), pos = i == line ? startCh : 0;
+    for (;;) {
+      var nextOpen = text.indexOf(startToken, pos), nextClose = text.indexOf(endToken, pos);
+      if (nextOpen < 0) nextOpen = text.length;
+      if (nextClose < 0) nextClose = text.length;
+      pos = Math.min(nextOpen, nextClose);
+      if (pos == text.length) break;
+      if (pos == nextOpen) ++depth;
+      else if (!--depth) { end = i; endCh = pos; break outer; }
+      ++pos;
+    }
+  }
+  if (end == null || line == end && endCh == startCh) return;
+  return {from: CodeMirror.Pos(line, startCh),
+          to: CodeMirror.Pos(end, endCh)};
+});
+  
+  var WRAP_CLASS = "CodeMirror-activeline";
+  var BACK_CLASS = "CodeMirror-activeline-background";
+  var GUTT_CLASS = "CodeMirror-activeline-gutter";
+
+  CodeMirror.defineOption("styleActiveLine", false, function(cm, val, old) {
+    var prev = old == CodeMirror.Init ? false : old;
+    if (val == prev) return
+    if (prev) {
+      cm.off("beforeSelectionChange", selectionChange);
+      clearActiveLines(cm);
+      delete cm.state.activeLines;
+    }
+    if (val) {
+      cm.state.activeLines = [];
+      updateActiveLines(cm, cm.listSelections());
+      cm.on("beforeSelectionChange", selectionChange);
+    }
+  });
+
+  function clearActiveLines(cm) {
+    for (var i = 0; i < cm.state.activeLines.length; i++) {
+      cm.removeLineClass(cm.state.activeLines[i], "wrap", WRAP_CLASS);
+      cm.removeLineClass(cm.state.activeLines[i], "background", BACK_CLASS);
+      cm.removeLineClass(cm.state.activeLines[i], "gutter", GUTT_CLASS);
+    }
+  }
+
+  function sameArray(a, b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++)
+      if (a[i] != b[i]) return false;
+    return true;
+  }
+
+  function updateActiveLines(cm, ranges) {
+    var active = [];
+    for (var i = 0; i < ranges.length; i++) {
+      var range = ranges[i];
+      var option = cm.getOption("styleActiveLine");
+      if (typeof option == "object" && option.nonEmpty ? range.anchor.line != range.head.line : !range.empty())
+        continue
+      var line = cm.getLineHandleVisualStart(range.head.line);
+      if (active[active.length - 1] != line) active.push(line);
+    }
+    if (sameArray(cm.state.activeLines, active)) return;
+    cm.operation(function() {
+      clearActiveLines(cm);
+      for (var i = 0; i < active.length; i++) {
+        cm.addLineClass(active[i], "wrap", WRAP_CLASS);
+        cm.addLineClass(active[i], "background", BACK_CLASS);
+        cm.addLineClass(active[i], "gutter", GUTT_CLASS);
+      }
+      cm.state.activeLines = active;
+    });
+  }
+
+  function selectionChange(cm, sel) {
+    updateActiveLines(cm, sel.ranges);
+  }
+  
+  var ie_lt8 = /MSIE \d/.test(navigator.userAgent) &&
+    (document.documentMode == null || document.documentMode < 8);
+
+  var Pos = CodeMirror.Pos;
+
+  var matching = {"(": ")>", ")": "(<", "[": "]>", "]": "[<", "{": "}>", "}": "{<", "<": ">>", ">": "<<"};
+
+  function bracketRegex(config) {
+    return config && config.bracketRegex || /[(){}[\]]/
+  }
+
+  function findMatchingBracket(cm, where, config) {
+    var line = cm.getLineHandle(where.line), pos = where.ch - 1;
+    var afterCursor = config && config.afterCursor
+    if (afterCursor == null)
+      afterCursor = /(^| )cm-fat-cursor($| )/.test(cm.getWrapperElement().className)
+    var re = bracketRegex(config)
+
+    // A cursor is defined as between two characters, but in in vim command mode
+    // (i.e. not insert mode), the cursor is visually represented as a
+    // highlighted box on top of the 2nd character. Otherwise, we allow matches
+    // from before or after the cursor.
+    var match = (!afterCursor && pos >= 0 && re.test(line.text.charAt(pos)) && matching[line.text.charAt(pos)]) ||
+        re.test(line.text.charAt(pos + 1)) && matching[line.text.charAt(++pos)];
+    if (!match) return null;
+    var dir = match.charAt(1) == ">" ? 1 : -1;
+    if (config && config.strict && (dir > 0) != (pos == where.ch)) return null;
+    var style = cm.getTokenTypeAt(Pos(where.line, pos + 1));
+
+    var found = scanForBracket(cm, Pos(where.line, pos + (dir > 0 ? 1 : 0)), dir, style, config);
+    if (found == null) return null;
+    return {from: Pos(where.line, pos), to: found && found.pos,
+            match: found && found.ch == match.charAt(0), forward: dir > 0};
+  }
+
+  // bracketRegex is used to specify which type of bracket to scan
+  // should be a regexp, e.g. /[[\]]/
+  //
+  // Note: If "where" is on an open bracket, then this bracket is ignored.
+  //
+  // Returns false when no bracket was found, null when it reached
+  // maxScanLines and gave up
+  function scanForBracket(cm, where, dir, style, config) {
+    var maxScanLen = (config && config.maxScanLineLength) || 10000;
+    var maxScanLines = (config && config.maxScanLines) || 1000;
+
+    var stack = [];
+    var re = bracketRegex(config)
+    var lineEnd = dir > 0 ? Math.min(where.line + maxScanLines, cm.lastLine() + 1)
+                          : Math.max(cm.firstLine() - 1, where.line - maxScanLines);
+    for (var lineNo = where.line; lineNo != lineEnd; lineNo += dir) {
+      var line = cm.getLine(lineNo);
+      if (!line) continue;
+      var pos = dir > 0 ? 0 : line.length - 1, end = dir > 0 ? line.length : -1;
+      if (line.length > maxScanLen) continue;
+      if (lineNo == where.line) pos = where.ch - (dir < 0 ? 1 : 0);
+      for (; pos != end; pos += dir) {
+        var ch = line.charAt(pos);
+        if (re.test(ch) && (style === undefined ||
+                            (cm.getTokenTypeAt(Pos(lineNo, pos + 1)) || "") == (style || ""))) {
+          var match = matching[ch];
+          if (match && (match.charAt(1) == ">") == (dir > 0)) stack.push(ch);
+          else if (!stack.length) return {pos: Pos(lineNo, pos), ch: ch};
+          else stack.pop();
+        }
+      }
+    }
+    return lineNo - dir == (dir > 0 ? cm.lastLine() : cm.firstLine()) ? false : null;
+  }
+
+  function matchBrackets(cm, autoclear, config) {
+    // Disable brace matching in long lines, since it'll cause hugely slow updates
+    var maxHighlightLen = cm.state.matchBrackets.maxHighlightLineLength || 1000,
+      highlightNonMatching = config && config.highlightNonMatching;
+    var marks = [], ranges = cm.listSelections();
+    for (var i = 0; i < ranges.length; i++) {
+      var match = ranges[i].empty() && findMatchingBracket(cm, ranges[i].head, config);
+      if (match && (match.match || highlightNonMatching !== false) && cm.getLine(match.from.line).length <= maxHighlightLen) {
+        var style = match.match ? "CodeMirror-matchingbracket" : "CodeMirror-nonmatchingbracket";
+        marks.push(cm.markText(match.from, Pos(match.from.line, match.from.ch + 1), {className: style}));
+        if (match.to && cm.getLine(match.to.line).length <= maxHighlightLen)
+          marks.push(cm.markText(match.to, Pos(match.to.line, match.to.ch + 1), {className: style}));
+      }
+    }
+
+    if (marks.length) {
+      // Kludge to work around the IE bug from issue #1193, where text
+      // input stops going to the textarea whenever this fires.
+      if (ie_lt8 && cm.state.focused) cm.focus();
+
+      var clear = function() {
+        cm.operation(function() {
+          for (var i = 0; i < marks.length; i++) marks[i].clear();
+        });
+      };
+      if (autoclear) setTimeout(clear, 800);
+      else return clear;
+    }
+  }
+
+  function doMatchBrackets(cm) {
+    cm.operation(function() {
+      if (cm.state.matchBrackets.currentlyHighlighted) {
+        cm.state.matchBrackets.currentlyHighlighted();
+        cm.state.matchBrackets.currentlyHighlighted = null;
+      }
+      cm.state.matchBrackets.currentlyHighlighted = matchBrackets(cm, false, cm.state.matchBrackets);
+    });
+  }
+
+  function clearHighlighted(cm) {
+    if (cm.state.matchBrackets && cm.state.matchBrackets.currentlyHighlighted) {
+      cm.state.matchBrackets.currentlyHighlighted();
+      cm.state.matchBrackets.currentlyHighlighted = null;
+    }
+  }
+
+  CodeMirror.defineOption("matchBrackets", false, function(cm, val, old) {
+    if (old && old != CodeMirror.Init) {
+      cm.off("cursorActivity", doMatchBrackets);
+      cm.off("focus", doMatchBrackets)
+      cm.off("blur", clearHighlighted)
+      clearHighlighted(cm);
+    }
+    if (val) {
+      cm.state.matchBrackets = typeof val == "object" ? val : {};
+      cm.on("cursorActivity", doMatchBrackets);
+      cm.on("focus", doMatchBrackets)
+      cm.on("blur", clearHighlighted)
+    }
+  });
+
+  CodeMirror.defineExtension("matchBrackets", function() {matchBrackets(this, true);});
+  CodeMirror.defineExtension("findMatchingBracket", function(pos, config, oldConfig){
+    // Backwards-compatibility kludge
+    if (oldConfig || typeof config == "boolean") {
+      if (!oldConfig) {
+        config = config ? {strict: true} : null
+      } else {
+        oldConfig.strict = config
+        config = oldConfig
+      }
+    }
+    return findMatchingBracket(this, pos, config)
+  });
+  CodeMirror.defineExtension("scanForBracket", function(pos, dir, style, config){
+    return scanForBracket(this, pos, dir, style, config);
+  });
+  
+  
+});
